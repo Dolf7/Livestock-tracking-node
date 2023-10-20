@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <eeprom.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
@@ -8,32 +7,46 @@
 #include "RTClib.h"
 #include <LoRa.h>
 #include <SPI.h>
+#include <EEPROM.h>
+#include <vector>
+#include "data.h"
 
-#define EEPROM_SIZE 255
+// Define for Pin
 #define RXPin 16
 #define TXPin 17
 #define ss 5
 #define rst 14
 #define dio0 2
 
-HardwareSerial gpsSerial(1); // Serial object for GPS module
+// Define for compiled static value
+#define EEPROM_SIZE 216
+#define SF 12 // Define spreading Factor
 
+// Global Object
+HardwareSerial gpsSerial(1);
 Adafruit_MPU6050 mpu;
 RTC_DS3231 rtc;
 TinyGPSPlus gps;
+
+// Global Variable
+uint8_t eeprom_addres_to_write = 0;
 uint8_t hour, minute, seconds;
-uint8_t eeprom_addres_to_write = -1;
+double latitude, longitude;
+float ax, ay, az;
 
-float latitude, longitude;
-
-void write_to_eeprom();
-void print_all_eeprom();
-void clear_all_eeprom();
+// Declare Function
 void gps_func();
+void test_print();
+void write_to_eeprom(data_store data_sens);
+void clear_all_eeprom();
+void print_all_eeprom();
+void read_and_send();
 
 void setup(void)
 {
+  // Init Serial 1 - For Monitoring;
   Serial.begin(115200);
+
   // Init EEPROM
   EEPROM.begin(EEPROM_SIZE);
   clear_all_eeprom();
@@ -45,8 +58,7 @@ void setup(void)
     Serial.println("Couldn't find RTC");
     while (!rtc.begin())
     {
-      delay(1000);
-      Serial.print(".");
+      Serial.println("init RTC ...");
     }
   }
   Serial.println("RTC Found!");
@@ -63,8 +75,7 @@ void setup(void)
     Serial.println("Failed to find MPU6050 chip");
     while (!mpu.begin(0x69))
     {
-      delay(1000);
-      Serial.print(".-");
+      Serial.println("Init MPU ...");
     }
   }
   Serial.println("MPU6050 Found!");
@@ -77,54 +88,103 @@ void setup(void)
   LoRa.setPins(ss, rst, dio0);
   while (!LoRa.begin(433E6))
   {
-    Serial.println(".");
-    delay(500);
+    Serial.println("Init LoRa ...");
   }
 
-  LoRa.setSpreadingFactor(6);
+  LoRa.setSpreadingFactor(8);
   LoRa.setCodingRate4(4);
-
   LoRa.setSyncWord(0xF3);
 
-  Serial.println("");
+  Serial.println("Run Program !");
   delay(3500);
 }
 
 void loop()
 {
-  sensors_event_t a, g, temp;
-  DateTime now = rtc.now();
 
+  DateTime now = rtc.now();
   hour = (uint8_t)now.hour();
   minute = (uint8_t)now.minute();
   seconds = (uint8_t)now.second();
 
-  write_to_eeprom();
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  ax = a.acceleration.x;
+  ay = a.acceleration.y;
+  az = a.acceleration.z;
 
+  gps_func();
+
+  test_print();
+
+  data_store data_sensor(hour, minute, seconds, ax, ay, az, latitude, longitude);
+  write_to_eeprom(data_sensor);
+  // print_all_eeprom();
+
+  if (eeprom_addres_to_write >= EEPROM_SIZE)
+  {
+    read_and_send();
+    Serial.println("FINISH READ AND SEND");
+  }
+
+  Serial.print("EEPROM ADDRESS : ");
+  Serial.println(eeprom_addres_to_write);
+  Serial.println("-----------------------");
+
+  delay(5000);
+}
+
+void test_print()
+{
+  Serial.print("RTC =  ");
   Serial.print(hour, DEC);
   Serial.print(':');
   Serial.print(minute, DEC);
   Serial.print(':');
   Serial.print(seconds, DEC);
-  Serial.println();
+  Serial.println(" ");
 
-  mpu.getEvent(&a, &g, &temp);
+  Serial.print("MPU =  ");
+  Serial.print(ax);
+  Serial.print(':');
+  Serial.print(ay);
+  Serial.print(':');
+  Serial.print(az);
+  Serial.println(" ");
 
-  gps_func();
-  Serial.print("Lat : ");
-  Serial.print(latitude);
-  Serial.print("Lng : ");
-  Serial.print(longitude);
+  Serial.print("GPS = ");
+  Serial.print(longitude, 6);
+  Serial.print(" | ");
+  Serial.println(latitude, 6);
 
-  Serial.println("");
-  delay(5000);
+  Serial.println("-----");
 }
 
-void write_to_eeprom()
+void gps_func()
 {
-  EEPROM.write(++eeprom_addres_to_write, hour);
-  EEPROM.write(++eeprom_addres_to_write, minute);
-  EEPROM.write(++eeprom_addres_to_write, seconds);
+  while (gpsSerial.available() > 0)
+  {
+    if (gps.encode(gpsSerial.read()))
+    {
+      if (gps.location.isUpdated())
+      {
+        latitude = gps.location.lat();
+        longitude = gps.location.lng();
+      }
+    }
+  }
+}
+
+void accelero_acquisition(){
+
+}
+
+void write_to_eeprom(data_store data_sens)
+{
+  EEPROM.put(eeprom_addres_to_write, data_sens);
+  // Serial.println("Size of Data : ");
+  // Serial.println(sizeof(data_sens));
+  eeprom_addres_to_write += sizeof(data_sens);
 }
 
 void print_all_eeprom()
@@ -150,26 +210,31 @@ void clear_all_eeprom()
     EEPROM.write(i, 0xFF);
     EEPROM.commit();
   }
+  eeprom_addres_to_write = 0;
 }
 
-void gps_func()
+void read_and_send()
 {
-  int i = 0, j = 0;
-  while (gpsSerial.available() > 0)
+  //READ DATA FROM AND SAVE IN LOCAL VARIABLE
+  char dataString[EEPROM_SIZE + 1];
+  for (int i = 0; i < EEPROM_SIZE; i++)
   {
-    if (gps.encode(gpsSerial.read()))
-    {
-      if (gps.location.isValid())
-      {
-        Serial.print("Latitude: ");
-        Serial.println(gps.location.lat(), DEC);
-        Serial.print("Longitude: ");
-        Serial.println(gps.location.lng(), DEC);
-        longitude = gps.location.lng();
-        latitude = gps.location.lat();
-      }
-    }
+    dataString[i] = EEPROM.read(i);
   }
-  Serial.println("LOOP FIN");
-  delay(1000);
+  dataString[EEPROM_SIZE] = '\0';
+  Serial.print("Data read from EEPROM: ");
+
+  for(int i=0; i<EEPROM_SIZE; i++){
+    Serial.print(dataString[i], HEX);
+    Serial.print(' ');
+  }
+  Serial.println(" ");
+
+  // SEND
+  LoRa.beginPacket();
+  LoRa.print(dataString);
+  LoRa.endPacket();
+
+  //CLEAR EEPROM
+  clear_all_eeprom();
 }

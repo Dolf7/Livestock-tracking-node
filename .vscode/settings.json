@@ -50,5 +50,6 @@
         "cinttypes": "cpp",
         "typeinfo": "cpp",
         "bitset": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "C:/Users/lenopo/Documents/PlatformIO/Projects/LiveStock_Tracking_Node/.pio/libdeps/esp32doit-devkit-v1/Adafruit BusIO"
 }
