@@ -16,12 +16,12 @@ public:
     // GPS - 8 Bytes
     int lat, lng;
 
-    data_store(int hour, int minute, int second, std::vector<double> ax, std::vector<double> ay, std::vector<double> az, int time_interval, double lat, double lng)
+    data_store(int hour, int minute, int second, int speed, double lat, double lng)
     {
         this->hour = hour;
         this->minute = minute;
         this->second = second;
-        this->speed = acc_to_speed(calculate_speed(ax, time_interval), calculate_speed(ay, time_interval), calculate_speed(az, time_interval));
+        this->speed = speed;
         this->lat = floatToIntWithIndex(lat);
         this->lng = floatToIntWithIndex(lng);
     }
@@ -67,29 +67,5 @@ private:
         // Convert the string to an integer
         int int_result = std::stoi(int_str);
         return int_result;
-    }
-
-    uint8_t acc_to_speed(double ax, double ay, double az)
-    {
-        // Convert Acc from XYZ angle(3*4 bytes) to speed (1 Bytes)
-        return sqrt((ax * ax) + (ay * ay) + (az * az));
-    }
-    // Function to calculate speed from acceleration data
-    double calculate_speed(const std::vector<double> &acceleration, double time_interval)
-    {
-        // Calculate velocity by integrating acceleration
-        std::vector<double> velocity;
-        for (const auto &accel : acceleration)
-        {
-            velocity.push_back(accel * (time_interval / 1000)); // divide by 1000 convert (ms -> s)
-        }
-
-        // Calculate speed by integrating velocity
-        double speed = 0.0;
-        for (const auto &v : velocity)
-        {
-            speed += v;
-        }
-        return speed;
     }
 };

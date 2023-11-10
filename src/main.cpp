@@ -1,6 +1,4 @@
 #include <Arduino.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
 #include <Wire.h>
 #include <TinyGPS++.h>
 #include <HardwareSerial.h>
@@ -8,7 +6,6 @@
 #include <LoRa.h>
 #include <SPI.h>
 #include <EEPROM.h>
-#include <vector>
 #include "data.h"
 
 // Define for Pin
@@ -17,122 +14,93 @@
 #define ss 5
 #define rst 14
 #define dio0 2
+#define lora_trig_pin 25
+#define rtc_trig_pin 27
+#define gps_trig_pin 26
 
 // Define for compiled static value
-#define EEPROM_SIZE 240
-#define time_interval_acceleration 100
-#define SF 12 // Define spreading Factor
+#define EEPROM_SIZE 24
+
+#define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP 5        /* Time ESP32 will go to sleep (in seconds) */
 
 // Global Object
 HardwareSerial gpsSerial(1);
-Adafruit_MPU6050 mpu;
 RTC_DS3231 rtc;
 TinyGPSPlus gps;
 
 // Global Variable
+RTC_DATA_ATTR int bootCount = 0;
 uint8_t eeprom_addres_to_write = 0;
 uint8_t hour, minute, seconds;
 double gps_speed;
 double latitude, longitude;
-// std::vector<double> acc_x, acc_y, acc_z;
+
+// declare Initizalise Function
+void init_LoRa(int SF, int CR, long BW, uint8_t SW);
+void init_RTC();
+void init_GPS();
+void init_eeprom();
+
+void stop_all_sensor();
 
 // Declare Function
+void run();
+void time_acquisition();
 void gps_acquisition();
 void test_print();
 void write_to_eeprom(data_store data_sens);
 void clear_all_eeprom();
 void print_all_eeprom();
 void read_and_send();
-void accelero_acquisition(sensors_event_t acc, int time_interval);
+void print_wakeup_reason();
 
 void setup(void)
 {
   // Init Serial 1 - For Monitoring;
   Serial.begin(115200);
 
-  // Init EEPROM
-  EEPROM.begin(EEPROM_SIZE);
-  clear_all_eeprom();
+  pinMode(rtc_trig_pin, OUTPUT);
+  pinMode(gps_trig_pin, OUTPUT);
+  pinMode(lora_trig_pin, OUTPUT);
 
-  Wire.begin();
-  // Init RTC
-  if (!rtc.begin())
-  {
-    Serial.println("Couldn't find RTC");
-    while (!rtc.begin())
-    {
-      Serial.println("init RTC ...");
-    }
-  }
-  Serial.println("RTC Found!");
-
-  if (rtc.lostPower())
-  {
-    Serial.println("RTC lost power, setting the time...");
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
-
-  // Init MPU - Accelerometer;
-  if (!mpu.begin(0x69))
-  {
-    Serial.println("Failed to find MPU6050 chip");
-    while (!mpu.begin(0x69))
-    {
-      Serial.println("Init MPU ...");
-    }
-  }
-  Serial.println("MPU6050 Found!");
-
-  // Can handle 2*G(9.8 m/s) acceleration;
-  mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
-
-  // INIT GPS
-  gpsSerial.begin(9600, SERIAL_8N1, RXPin, TXPin);
-
-  Serial.println("Init GPS...");
-
-  // INIT LORA
-  LoRa.setPins(ss, rst, dio0);
-  while (!LoRa.begin(433E6))
-  {
-    Serial.println("Init LoRa ...");
-  }
-
-  LoRa.setSpreadingFactor(8);
-  LoRa.setCodingRate4(4);
-  LoRa.setSyncWord(0xA5);
-
-  Serial.println("Start LoRa.");
-
+  ++bootCount;
+  Serial.println("Boot number: " + String(bootCount));
+  // Print the wakeup reason for ESP32
+  print_wakeup_reason();
   Serial.println("Run Program !");
-  delay(3500);
+
+  run();
+
+  // delay(2000);
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  Serial.println("Going to Sleep");
+  Serial.flush();
+  esp_deep_sleep_start();
 }
 
 void loop()
+{ // NEVER CALLED
+}
+
+void run()
 {
+  // Init EEPROM
+  init_eeprom();
 
-  DateTime now = rtc.now();
-  hour = (uint8_t)now.hour();
-  minute = (uint8_t)now.minute();
-  seconds = (uint8_t)now.second();
+  Wire.begin();
+  // Init RTC
+  init_RTC();
+  // INIT GPS
+  init_GPS();
 
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
+  time_acquisition();
   gps_acquisition();
 
-  std::vector<double> acc_x, acc_y, acc_z;
-  for (int i = 0; i < 5; i++)
-  {
-
-    acc_x.push_back(a.acceleration.x);
-    acc_y.push_back(a.acceleration.y);
-    acc_z.push_back(a.acceleration.z);
-    delay(time_interval_acceleration);
-  }
   // test_print();
+  stop_all_sensor();
 
-  data_store data_sensor(hour, minute, seconds, acc_x, acc_y, acc_z, time_interval_acceleration, latitude, longitude);
+  data_store data_sensor(hour, minute, seconds, gps_speed, latitude, longitude);
 
   data_sensor.test_print_properties();
 
@@ -148,9 +116,6 @@ void loop()
   Serial.print("EEPROM ADDRESS : ");
   Serial.println(eeprom_addres_to_write);
   Serial.println("-----------------------");
-
-  Serial.println("---");
-  delay(2000);
 }
 
 void test_print()
@@ -163,14 +128,6 @@ void test_print()
   Serial.print(seconds, DEC);
   Serial.println(" ");
 
-  // Serial.print("MPU =  ");
-  // Serial.print(ax);
-  // Serial.print(':');
-  // Serial.print(ay);
-  // Serial.print(':');
-  // Serial.print(az);
-  // Serial.println(" ");
-
   Serial.print("GPS = ");
   Serial.print(longitude, 6);
   Serial.print(" | ");
@@ -180,6 +137,81 @@ void test_print()
   Serial.println(gps_speed);
 
   Serial.println("-----");
+}
+
+// INIT FUNCTION
+
+void init_LoRa(int SF, int CR, long BW, uint8_t SW)
+{
+  digitalWrite(lora_trig_pin, HIGH);
+  delay(100);
+
+  LoRa.setPins(ss, rst, dio0);
+  while (!LoRa.begin(433E6))
+  {
+    Serial.println("Init LoRa ...");
+  }
+
+  LoRa.setSpreadingFactor(SF);
+  LoRa.setCodingRate4(CR);
+  LoRa.setSignalBandwidth(BW);
+  LoRa.setSyncWord(SW);
+
+  Serial.println("Start LoRa.");
+}
+
+void init_RTC()
+{
+  digitalWrite(rtc_trig_pin, HIGH);
+  delay(100);
+  if (!rtc.begin())
+  {
+    Serial.println("Couldn't find RTC");
+    while (!rtc.begin())
+    {
+      Serial.println("init RTC ...");
+    }
+  }
+  Serial.println("RTC Found!");
+
+  if (rtc.lostPower())
+  {
+    Serial.println("RTC lost power, setting the time...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+}
+
+void init_GPS()
+{
+  digitalWrite(gps_trig_pin, HIGH);
+  delay(100);
+  gpsSerial.begin(9600, SERIAL_8N1, RXPin, TXPin);
+  Serial.println("Init GPS...");
+}
+
+void init_eeprom()
+{
+  EEPROM.begin(EEPROM_SIZE + 1);
+  if (bootCount == 1)
+  {
+    Serial.println("FIRST WAKE set EEPROM 0");
+    EEPROM.write(EEPROM_SIZE, 0);
+    EEPROM.commit();
+  }
+}
+
+void stop_all_sensor()
+{
+  digitalWrite(gps_trig_pin, LOW);
+  digitalWrite(rtc_trig_pin, LOW);
+}
+
+void time_acquisition(){
+    DateTime now = rtc.now();
+  hour = (uint8_t)now.hour();
+  minute = (uint8_t)now.minute();
+  seconds = (uint8_t)now.second();
+
 }
 
 void gps_acquisition()
@@ -200,15 +232,23 @@ void gps_acquisition()
 
 void write_to_eeprom(data_store data_sens)
 {
+  eeprom_addres_to_write = EEPROM.read(EEPROM_SIZE);
+  Serial.print("");
+  Serial.print("EEPROM Address : ");
+  Serial.print(eeprom_addres_to_write);
+  EEPROM.commit();
+
   EEPROM.put(eeprom_addres_to_write, data_sens);
   Serial.println("Size of Data : ");
   Serial.println(sizeof(data_sens));
   eeprom_addres_to_write += sizeof(data_sens);
+  EEPROM.write(EEPROM_SIZE, eeprom_addres_to_write);
+  EEPROM.commit();
 }
 
 void print_all_eeprom()
 {
-  for (int i = 0; i < EEPROM_SIZE; i++)
+  for (int i = 0; i < EEPROM_SIZE + sizeof(eeprom_addres_to_write); i++)
   {
     if (i % 3 == 0)
     {
@@ -230,10 +270,15 @@ void clear_all_eeprom()
     EEPROM.commit();
   }
   eeprom_addres_to_write = 0;
+  EEPROM.write(EEPROM_SIZE, eeprom_addres_to_write);
+  EEPROM.commit();
 }
 
 void read_and_send()
 {
+  // INIT LORA
+  init_LoRa(8, 4, 125E3, 0xF3);
+
   // READ DATA FROM AND SAVE IN LOCAL VARIABLE
   char dataString[EEPROM_SIZE + 1];
   for (int i = 0; i < EEPROM_SIZE; i++)
@@ -250,11 +295,48 @@ void read_and_send()
   }
   Serial.println(" ");
 
+  String string_send(dataString);
+
+  Serial.print("STR : ");
+  Serial.print(string_send);
+  Serial.print(" With Size : ");
+  Serial.println(string_send.length());
+
   // SEND
   LoRa.beginPacket();
-  LoRa.print(dataString);
+  LoRa.print(string_send);
+  LoRa.print("-test");
   LoRa.endPacket();
 
   // CLEAR EEPROM
   clear_all_eeprom();
+}
+
+void print_wakeup_reason()
+{
+  esp_sleep_wakeup_cause_t wakeup_reason;
+
+  wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  switch (wakeup_reason)
+  {
+  case ESP_SLEEP_WAKEUP_EXT0:
+    Serial.println("Wakeup caused by external signal using RTC_IO");
+    break;
+  case ESP_SLEEP_WAKEUP_EXT1:
+    Serial.println("Wakeup caused by external signal using RTC_CNTL");
+    break;
+  case ESP_SLEEP_WAKEUP_TIMER:
+    Serial.println("Wakeup caused by timer");
+    break;
+  case ESP_SLEEP_WAKEUP_TOUCHPAD:
+    Serial.println("Wakeup caused by touchpad");
+    break;
+  case ESP_SLEEP_WAKEUP_ULP:
+    Serial.println("Wakeup caused by ULP program");
+    break;
+  default:
+    Serial.printf("Wakeup was not caused by deep sleep: %d\n", wakeup_reason);
+    break;
+  }
 }
