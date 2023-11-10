@@ -19,7 +19,7 @@
 #define gps_trig_pin 26
 
 // Define for compiled static value
-#define EEPROM_SIZE 24
+#define EEPROM_SIZE 216
 
 #define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP 5        /* Time ESP32 will go to sleep (in seconds) */
@@ -280,12 +280,12 @@ void read_and_send()
   init_LoRa(8, 4, 125E3, 0xF3);
 
   // READ DATA FROM AND SAVE IN LOCAL VARIABLE
-  char dataString[EEPROM_SIZE + 1];
+  uint8_t dataString[EEPROM_SIZE];
   for (int i = 0; i < EEPROM_SIZE; i++)
   {
     dataString[i] = EEPROM.read(i);
   }
-  dataString[EEPROM_SIZE] = '\0';
+  // dataString[EEPROM_SIZE] = '\0';
   Serial.print("Data read from EEPROM: ");
 
   for (int i = 0; i < EEPROM_SIZE; i++)
@@ -295,17 +295,16 @@ void read_and_send()
   }
   Serial.println(" ");
 
-  String string_send(dataString);
+  // String string_send(dataString);
 
-  Serial.print("STR : ");
-  Serial.print(string_send);
-  Serial.print(" With Size : ");
-  Serial.println(string_send.length());
+  // Serial.print("STR : ");
+  // Serial.print(string_send);
+  // Serial.print(" With Size : ");
+  // Serial.println(string_send.length());
 
   // SEND
   LoRa.beginPacket();
-  LoRa.print(string_send);
-  LoRa.print("-test");
+  LoRa.write(dataString, EEPROM_SIZE+1);
   LoRa.endPacket();
 
   // CLEAR EEPROM
