@@ -1,8 +1,6 @@
 #include <stdio.h>
-#include <math.h>
 #include <iostream>
-#include <vector>
-#include <Arduino.h>
+// #include <Arduino.h>
 
 #define ACCELEROMETER_SENSITIVITY 16384 // Sensitivity for MPU-6050 accelerometer (for +/- 2g range)
 
@@ -22,14 +20,25 @@ public:
         this->minute = minute;
         this->second = second;
         this->speed = speed;
-        this->lat = floatToIntWithIndex(lat);
-        this->lng = floatToIntWithIndex(lng);
+        this->lat = doubleToIntWithIndex(lat);
+        this->lng = doubleToIntWithIndex(lng);
+    }
+
+    double getLatValue()
+    {
+        return intWithIndexToDouble(this->lat);
+    }
+
+    double getLngValue()
+    {
+        return intWithIndexToDouble(this->lng);
     }
 
     void test_print_properties()
     {
         Serial.println("----------");
         Serial.println("Object Data Properties : ");
+
         Serial.print("Time = ");
         Serial.print(this->hour);
         Serial.print(" : ");
@@ -48,24 +57,49 @@ public:
     }
 
 private:
-    int floatToIntWithIndex(double double_num)
+    int doubleToIntWithIndex(double double_num)
     {
-        if(double_num == 0)
-            return -7.123456;
-        
+        if (double_num == 0)
+            return 0;
+
         // Convert double to int (64bit -> 32bit)
         // ex : (double) 123.456789 -> (int) 1234567893
         // 3 in the of int is the index of dot(.) in real double number
 
         // Convert the float to a string
-        std::string float_str = std::to_string(double_num);
-        int decimal_point_index = float_str.find('.');
+        std::string double_str = std::to_string(double_num);
+        int decimal_point_index = double_str.find('.');
 
         // Remove the decimal point and concatenate the resulting string
-        std::string int_str = float_str.substr(0, decimal_point_index) + float_str.substr(decimal_point_index + 1) + std::to_string((float_str[0] != '-' ? decimal_point_index : decimal_point_index - 1));
+        std::string int_str = double_str.substr(0, decimal_point_index) + double_str.substr(decimal_point_index + 1) + std::to_string((double_str[0] != '-' ? decimal_point_index : decimal_point_index - 1));
 
         // Convert the string to an integer
         int int_result = std::stoi(int_str);
         return int_result;
+    }
+
+    double intWithIndexToDouble(int int_num)
+    {
+        std::string int_str = std::to_string(int_num);
+
+        int decimal_point_index = static_cast<int>(int_str[int_str.length() - 1]) - '0';
+
+        std::string decimal_string = int_str.substr(0, int_str.length() - 1);
+
+        std::string decimal_string_fix_value;
+        int j = 0;
+        for (int i = 0; i < decimal_string.length() + 1; i++)
+        {
+            if (i == (decimal_string[0] == '-' ? decimal_point_index + 1 : decimal_point_index))
+            {
+                decimal_string_fix_value += '.';
+                continue;
+            }
+            decimal_string_fix_value += decimal_string[j];
+            j++;
+        }
+
+        double real_data = std::stod(decimal_string_fix_value);
+        return real_data;
     }
 };

@@ -20,9 +20,30 @@
 
 // Define for compiled static value
 #define EEPROM_SIZE 216
-
 #define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP 5        /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP 10   /* Time ESP32 will go to sleep (in seconds) */
+
+// declare Initizalise Function
+void init_LoRa(int SF, int CR, long BW, uint8_t SW);
+void init_RTC();
+void init_GPS();
+void init_eeprom();
+void stop_all_sensor();
+void stop_rtc();
+void stop_gps();
+void stop_lora();
+
+// Declare Function
+void run();
+void time_acquisition();
+void gps_acquisition();
+void wait_gps();
+void write_to_eeprom(data_store data_sens);
+void clear_all_eeprom();
+void print_all_eeprom();
+void read_and_send();
+void print_wakeup_reason();
+void test_print();
 
 // Global Object
 HardwareSerial gpsSerial(1);
@@ -36,24 +57,8 @@ uint8_t hour, minute, seconds;
 double gps_speed;
 double latitude, longitude;
 
-// declare Initizalise Function
-void init_LoRa(int SF, int CR, long BW, uint8_t SW);
-void init_RTC();
-void init_GPS();
-void init_eeprom();
-
-void stop_all_sensor();
-
-// Declare Function
-void run();
-void time_acquisition();
-void gps_acquisition();
-void test_print();
-void write_to_eeprom(data_store data_sens);
-void clear_all_eeprom();
-void print_all_eeprom();
-void read_and_send();
-void print_wakeup_reason();
+// DEVICE ID
+const uint8_t deviceId = 73;
 
 void setup(void)
 {
@@ -72,7 +77,6 @@ void setup(void)
 
   run();
 
-  // delay(2000);
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   Serial.println("Going to Sleep");
   Serial.flush();
@@ -89,28 +93,29 @@ void run()
   init_eeprom();
 
   Wire.begin();
-  // Init RTC
-  init_RTC();
-  // INIT GPS
+  // Location & speed acquition
   init_GPS();
-
-  time_acquisition();
+  wait_gps();
   gps_acquisition();
+  stop_gps();
 
-  // test_print();
-  stop_all_sensor();
+  // Time Acquisition
+  init_RTC();
+  time_acquisition();
+  stop_rtc();
 
   data_store data_sensor(hour, minute, seconds, gps_speed, latitude, longitude);
 
   data_sensor.test_print_properties();
 
   write_to_eeprom(data_sensor);
-  print_all_eeprom();
+  // print_all_eeprom();
 
   if (eeprom_addres_to_write >= EEPROM_SIZE)
   {
     read_and_send();
     Serial.println("FINISH READ AND SEND");
+    stop_lora();
   }
 
   Serial.print("EEPROM ADDRESS : ");
@@ -206,12 +211,28 @@ void stop_all_sensor()
   digitalWrite(rtc_trig_pin, LOW);
 }
 
-void time_acquisition(){
-    DateTime now = rtc.now();
+void stop_rtc()
+{
+  digitalWrite(rtc_trig_pin, LOW);
+}
+
+void stop_gps()
+{
+  digitalWrite(gps_trig_pin, LOW);
+}
+
+void stop_lora()
+{
+  digitalWrite(lora_trig_pin, LOW);
+}
+
+// Acquisistion Function
+void time_acquisition()
+{
+  DateTime now = rtc.now();
   hour = (uint8_t)now.hour();
   minute = (uint8_t)now.minute();
   seconds = (uint8_t)now.second();
-
 }
 
 void gps_acquisition()
@@ -220,7 +241,7 @@ void gps_acquisition()
   {
     if (gps.encode(gpsSerial.read()))
     {
-      if (gps.location.isUpdated())
+      if (gps.location.isValid())
       {
         latitude = gps.location.lat();
         longitude = gps.location.lng();
@@ -230,6 +251,28 @@ void gps_acquisition()
   }
 }
 
+// WAIT STATE
+void wait_gps()
+{
+  float test_lat = 0;
+  while (test_lat == 0)
+  {
+    while (gpsSerial.available() > 0)
+    {
+      if (gps.encode(gpsSerial.read()))
+      {
+        if (gps.location.isValid())
+        {
+          test_lat = gps.location.lat();
+          if (test_lat != 0)
+            return;
+        }
+      }
+    }
+  }
+}
+
+// SAVING FUCNTIONS
 void write_to_eeprom(data_store data_sens)
 {
   eeprom_addres_to_write = EEPROM.read(EEPROM_SIZE);
@@ -274,6 +317,7 @@ void clear_all_eeprom()
   EEPROM.commit();
 }
 
+// Sending Function
 void read_and_send()
 {
   // INIT LORA
@@ -295,16 +339,10 @@ void read_and_send()
   }
   Serial.println(" ");
 
-  // String string_send(dataString);
-
-  // Serial.print("STR : ");
-  // Serial.print(string_send);
-  // Serial.print(" With Size : ");
-  // Serial.println(string_send.length());
-
   // SEND
   LoRa.beginPacket();
-  LoRa.write(dataString, EEPROM_SIZE+1);
+  LoRa.write(deviceId);
+  LoRa.write(dataString, EEPROM_SIZE);
   LoRa.endPacket();
 
   // CLEAR EEPROM
