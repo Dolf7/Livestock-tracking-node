@@ -12,18 +12,18 @@ int main()
     // std::vector<double> acceleration_z = {0.1, 0.4, 0.8, 0.23}; // Replace with your data
     int speed = 120;
     int time_interval = 200;
-    double lng = -7.123456, lat = 120.789012;
+    double lat = -7.123456;
+    double lng = 120.789012;
 
     // data_store data(hour, minute, second, acceleration_x, acceleration_y, acceleration_z, time_interval, lat, lng);
 
-    data_store data(hour, minute, second, speed, lat, lng);
+    data_store data(hour, minute, second, lat, lng);
 
     // Test Print
     cout << "Object Data Properties : " << endl;
     cout << "Time = " << (int)data.hour << " : " << (int)data.minute << " : " << (int)data.second << endl;
-    cout << "Speed = " << (int)data.speed << endl;
     cout << "Location =  " << data.lat << " | " << data.lng << endl;
-
+    cout << "LAT = " << data.lat << endl << endl << endl;
     cout << "Real Lat Value = " << data.getLatValue() << endl;
     cout << "Real Lng Value = " << data.getLngValue() << endl;
 

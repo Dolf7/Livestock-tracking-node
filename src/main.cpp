@@ -19,9 +19,28 @@
 #define gps_trig_pin 26
 
 // Define for compiled static value
-#define EEPROM_SIZE 216
-#define uS_TO_S_FACTOR 1000000 /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP 10   /* Time ESP32 will go to sleep (in seconds) */
+#define SPREADING_FACTOR 12
+#define BANDWIDTH 125E3
+#define CODERATE 4
+#define SYNCWORD 0x34
+
+#ifndef SPREADING_FACTOR
+Serial.println("NOT INIT SF");
+#elif SPREADING_FACTOR == 7
+#define EEPROM_SIZE 220
+#elif SPREADING_FACTOR == 8
+#define EEPROM_SIZE 220
+#elif SPREADING_FACTOR == 9
+#define EEPROM_SIZE 110 
+#elif SPREADING_FACTOR == 10
+#define EEPROM_SIZE 44
+#elif SPREADING_FACTOR == 11
+#define EEPROM_SIZE 44
+#elif SPREADING_FACTOR == 12
+#define EEPROM_SIZE 44
+#endif
+
+#define uS_TO_mS_FACTOR 1000 /* Conversion factor for micro seconds to mili seconds */
 
 // declare Initizalise Function
 void init_LoRa(int SF, int CR, long BW, uint8_t SW);
@@ -41,8 +60,10 @@ void wait_gps();
 void write_to_eeprom(data_store data_sens);
 void clear_all_eeprom();
 void print_all_eeprom();
-void read_and_send();
-void print_wakeup_reason();
+void read_from_eeprom_and_send();
+void send_data(uint8_t stringData[EEPROM_SIZE], uint8_t deviceId);
+void go_to_sleep(unsigned long run_time);
+uint64_t count_acqusition_time();
 void test_print();
 
 // Global Object
@@ -54,8 +75,8 @@ TinyGPSPlus gps;
 RTC_DATA_ATTR int bootCount = 0;
 uint8_t eeprom_addres_to_write = 0;
 uint8_t hour, minute, seconds;
-double gps_speed;
 double latitude, longitude;
+const uint64_t time_to_each_acquisition = count_acqusition_time();
 
 // DEVICE ID
 const uint8_t deviceId = 73;
@@ -71,16 +92,15 @@ void setup(void)
 
   ++bootCount;
   Serial.println("Boot number: " + String(bootCount));
-  // Print the wakeup reason for ESP32
-  print_wakeup_reason();
-  Serial.println("Run Program !");
 
+  unsigned long start_time = millis();
   run();
+  unsigned long run_time = millis() - start_time;
 
-  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-  Serial.println("Going to Sleep");
-  Serial.flush();
-  esp_deep_sleep_start();
+  Serial.print("Active Time : ");
+  Serial.println(run_time);
+
+  go_to_sleep(run_time);
 }
 
 void loop()
@@ -89,37 +109,43 @@ void loop()
 
 void run()
 {
-  // Init EEPROM
-  init_eeprom();
-
   Wire.begin();
   // Location & speed acquition
+
+  unsigned long noww = millis();
+
   init_GPS();
   wait_gps();
   gps_acquisition();
   stop_gps();
+  Serial.print("GPS STATE : ");
+  Serial.println(millis() - noww);
 
+  noww = millis();
   // Time Acquisition
   init_RTC();
   time_acquisition();
   stop_rtc();
+  Serial.print("RTC STATE : ");
+  Serial.println(millis() - noww);
 
-  data_store data_sensor(hour, minute, seconds, gps_speed, latitude, longitude);
+  // test_print();
+  noww = millis();
+  data_store data_sensor(hour, minute, seconds, latitude, longitude);
 
   data_sensor.test_print_properties();
 
+  init_eeprom();
   write_to_eeprom(data_sensor);
-  // print_all_eeprom();
+  Serial.print("SAVE STATE : ");
+  Serial.println(millis() - noww);
 
   if (eeprom_addres_to_write >= EEPROM_SIZE)
   {
-    read_and_send();
+    read_from_eeprom_and_send();
     Serial.println("FINISH READ AND SEND");
-    stop_lora();
   }
 
-  Serial.print("EEPROM ADDRESS : ");
-  Serial.println(eeprom_addres_to_write);
   Serial.println("-----------------------");
 }
 
@@ -137,10 +163,6 @@ void test_print()
   Serial.print(longitude, 6);
   Serial.print(" | ");
   Serial.println(latitude, 6);
-
-  Serial.print("GPS Speed = ");
-  Serial.println(gps_speed);
-
   Serial.println("-----");
 }
 
@@ -177,8 +199,6 @@ void init_RTC()
       Serial.println("init RTC ...");
     }
   }
-  Serial.println("RTC Found!");
-
   if (rtc.lostPower())
   {
     Serial.println("RTC lost power, setting the time...");
@@ -201,6 +221,7 @@ void init_eeprom()
   {
     Serial.println("FIRST WAKE set EEPROM 0");
     EEPROM.write(EEPROM_SIZE, 0);
+    clear_all_eeprom();
     EEPROM.commit();
   }
 }
@@ -244,8 +265,11 @@ void gps_acquisition()
       if (gps.location.isValid())
       {
         latitude = gps.location.lat();
+        Serial.print("lat : ");
+        Serial.println(latitude, 6);
         longitude = gps.location.lng();
-        gps_speed = gps.speed.mps();
+        Serial.print("lng : ");
+        Serial.println(longitude, 6);
       }
     }
   }
@@ -254,6 +278,8 @@ void gps_acquisition()
 // WAIT STATE
 void wait_gps()
 {
+  Serial.println("WAIT GPS STATE");
+  unsigned long e = millis();
   float test_lat = 0;
   while (test_lat == 0)
   {
@@ -265,7 +291,11 @@ void wait_gps()
         {
           test_lat = gps.location.lat();
           if (test_lat != 0)
+          {
+            Serial.println("GPS");
+            Serial.println(millis() - e);
             return;
+          }
         }
       }
     }
@@ -276,15 +306,13 @@ void wait_gps()
 void write_to_eeprom(data_store data_sens)
 {
   eeprom_addres_to_write = EEPROM.read(EEPROM_SIZE);
-  Serial.print("");
   Serial.print("EEPROM Address : ");
-  Serial.print(eeprom_addres_to_write);
+  Serial.println(eeprom_addres_to_write);
   EEPROM.commit();
 
   EEPROM.put(eeprom_addres_to_write, data_sens);
-  Serial.println("Size of Data : ");
-  Serial.println(sizeof(data_sens));
   eeprom_addres_to_write += sizeof(data_sens);
+
   EEPROM.write(EEPROM_SIZE, eeprom_addres_to_write);
   EEPROM.commit();
 }
@@ -318,18 +346,15 @@ void clear_all_eeprom()
 }
 
 // Sending Function
-void read_and_send()
+void read_from_eeprom_and_send()
 {
-  // INIT LORA
-  init_LoRa(8, 4, 125E3, 0xF3);
-
+  unsigned long nowww = millis();
   // READ DATA FROM AND SAVE IN LOCAL VARIABLE
   uint8_t dataString[EEPROM_SIZE];
   for (int i = 0; i < EEPROM_SIZE; i++)
   {
     dataString[i] = EEPROM.read(i);
   }
-  // dataString[EEPROM_SIZE] = '\0';
   Serial.print("Data read from EEPROM: ");
 
   for (int i = 0; i < EEPROM_SIZE; i++)
@@ -338,42 +363,85 @@ void read_and_send()
     Serial.print(' ');
   }
   Serial.println(" ");
+  Serial.print("READ STATE");
+  Serial.println(millis() - nowww);
 
-  // SEND
-  LoRa.beginPacket();
-  LoRa.write(deviceId);
-  LoRa.write(dataString, EEPROM_SIZE);
-  LoRa.endPacket();
+
+  send_data(dataString, deviceId);
 
   // CLEAR EEPROM
   clear_all_eeprom();
 }
 
-void print_wakeup_reason()
+void send_data(uint8_t dataString[EEPROM_SIZE], uint8_t deviceId)
 {
-  esp_sleep_wakeup_cause_t wakeup_reason;
 
-  wakeup_reason = esp_sleep_get_wakeup_cause();
+  // INIT LORA
+  unsigned long a = millis();
+  init_LoRa(SPREADING_FACTOR, CODERATE, BANDWIDTH, SYNCWORD);
+  // SEND
+  LoRa.beginPacket();
+  LoRa.write(deviceId);
+  LoRa.write(dataString, EEPROM_SIZE);
+  LoRa.endPacket();
+  Serial.println(millis() - a);
 
-  switch (wakeup_reason)
+  stop_lora();
+}
+
+uint8_t getDataRate()
+{
+  if (SPREADING_FACTOR == 12 && BANDWIDTH == 125E3)
+    return 0;
+  if (SPREADING_FACTOR == 11 && BANDWIDTH == 125E3)
+    return 1;
+  if (SPREADING_FACTOR == 10 && BANDWIDTH == 125E3)
+    return 2;
+  if (SPREADING_FACTOR == 9 && BANDWIDTH == 125E3)
+    return 3;
+  if (SPREADING_FACTOR == 8 && BANDWIDTH == 125E3)
+    return 4;
+  if (SPREADING_FACTOR == 7 && BANDWIDTH == 125E3)
+    return 5;
+  if (SPREADING_FACTOR == 7 && BANDWIDTH == 250E3)
+    return 6;
+}
+
+uint64_t count_acqusition_time()
+{
+  uint8_t data_rate = getDataRate();
+  switch (data_rate)
   {
-  case ESP_SLEEP_WAKEUP_EXT0:
-    Serial.println("Wakeup caused by external signal using RTC_IO");
+  case 0:
+    return 999853;
     break;
-  case ESP_SLEEP_WAKEUP_EXT1:
-    Serial.println("Wakeup caused by external signal using RTC_CNTL");
+  case 1:
+    return 496927;
     break;
-  case ESP_SLEEP_WAKEUP_TIMER:
-    Serial.println("Wakeup caused by timer");
+  case 2:
+    return 272056;
     break;
-  case ESP_SLEEP_WAKEUP_TOUCHPAD:
-    Serial.println("Wakeup caused by touchpad");
-    break;
-  case ESP_SLEEP_WAKEUP_ULP:
-    Serial.println("Wakeup caused by ULP program");
-    break;
+  case 3:
+    return 129909;
+  case 4:
+    return 69046;
+  case 5:
+    return 39242;
   default:
-    Serial.printf("Wakeup was not caused by deep sleep: %d\n", wakeup_reason);
+    return 0;
     break;
   }
+}
+
+void go_to_sleep(unsigned long run_time)
+{
+  unsigned long sleep_time = (time_to_each_acquisition - run_time < 0 ? 0 : time_to_each_acquisition - run_time);
+  sleep_time = 0;
+
+  Serial.print("Sleep Time : ");
+  Serial.println(sleep_time);
+  esp_sleep_enable_timer_wakeup(sleep_time * uS_TO_mS_FACTOR);
+  Serial.println("Going to Sleep");
+  Serial.flush();
+  esp_deep_sleep_start();
 }

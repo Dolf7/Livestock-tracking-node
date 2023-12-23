@@ -1,25 +1,19 @@
 #include <stdio.h>
 #include <iostream>
 // #include <Arduino.h>
-
-#define ACCELEROMETER_SENSITIVITY 16384 // Sensitivity for MPU-6050 accelerometer (for +/- 2g range)
-
 class data_store
 {
 public:
     // Time - 3 Bytes
     uint8_t hour, minute, second;
-    // Speed - Acceleration - 1 Byte
-    uint8_t speed;
     // GPS - 8 Bytes
     int lat, lng;
 
-    data_store(int hour, int minute, int second, int speed, double lat, double lng)
+    data_store(int hour, int minute, int second, double lat, double lng)
     {
         this->hour = hour;
         this->minute = minute;
         this->second = second;
-        this->speed = speed;
         this->lat = doubleToIntWithIndex(lat);
         this->lng = doubleToIntWithIndex(lng);
     }
@@ -45,9 +39,6 @@ public:
         Serial.print(this->minute);
         Serial.print(" : ");
         Serial.println(this->second);
-
-        Serial.print("Speed = ");
-        Serial.println(this->speed);
 
         Serial.print("GPS = ");
         Serial.print(this->lat);
@@ -102,4 +93,4 @@ private:
         double real_data = std::stod(decimal_string_fix_value);
         return real_data;
     }
-};
+} __attribute__((packed));
