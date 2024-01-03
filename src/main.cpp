@@ -19,7 +19,7 @@
 #define gps_trig_pin 26
 
 // Define for compiled static value
-#define SPREADING_FACTOR 12
+#define SPREADING_FACTOR 7 //SET SPREADING FACTOR
 #define BANDWIDTH 125E3
 #define CODERATE 4
 #define SYNCWORD 0x34
@@ -436,7 +436,6 @@ uint64_t count_acqusition_time()
 void go_to_sleep(unsigned long run_time)
 {
   unsigned long sleep_time = (time_to_each_acquisition - run_time < 0 ? 0 : time_to_each_acquisition - run_time);
-  sleep_time = 0;
 
   Serial.print("Sleep Time : ");
   Serial.println(sleep_time);
