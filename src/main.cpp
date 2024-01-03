@@ -413,18 +413,18 @@ uint64_t count_acqusition_time()
   switch (data_rate)
   {
   case 0:
-    return 999853;
+    return 1987700;
     break;
   case 1:
-    return 496927;
+    return 993816;
     break;
   case 2:
-    return 272056;
+    return 544104;
     break;
   case 3:
-    return 129909;
+    return 259805;
   case 4:
-    return 69046;
+    return 138082;
   case 5:
     return 39242;
   default:
